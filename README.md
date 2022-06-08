@@ -1,5 +1,3 @@
-"# TFC" 
-
 # Nomad's discord bot for TFC stuff
 
 Currently this just pulls data from a Google Sheets document based on some criteria and spits it back to the server with some reactions attached.
