@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import os
 import random
+# import pickle
 
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -12,6 +13,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.auth.exceptions import RefreshError
+from google.oauth2 import service_account
+
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -19,26 +23,24 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 # The ID and range of Neon's sheet of maps + team sizes.
 SAMPLE_SPREADSHEET_ID = '1sXUDGC9XrRqKNbjq-qZeMNIgQDeRXdimEY1PZmXt6cY'
 SAMPLE_RANGE_NAME = 'Full List!A3:D'
+secret_file = os.path.join(os.getcwd(), 'SvcAcctCredentials.json')
 
 def pullmaps(players='2'):
     pulledmaps = [] # i don't think this is necessary
     creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+    # the file SvcAcctCredentials.json stores service account credentials
+    # the spreadsheet must be shared with this service account
+    if os.path.exists('SvcAcctCredentials.json'):
+        creds = service_account.Credentials.from_service_account_file(secret_file, scopes=SCOPES)
+
+    # if service account isn't set up, try prompting the user
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            'credentials.json', SCOPES)
+        creds = flow.run_local_server(port=0)
+    # # Save the credentials for the next run - N/A with service account
+    #     with open('token.json', 'w') as token:
+    #         token.write(creds.to_json())
 
     #check playercount so we can get the right maps
     match players:
@@ -84,11 +86,7 @@ def pullmaps(players='2'):
     except HttpError as err:
         print(err)
     
-    #print(pulledmaps)
     return pulledmaps
-
-#if __name__ == '__main__':
-    #main()
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
