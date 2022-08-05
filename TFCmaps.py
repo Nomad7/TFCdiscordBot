@@ -6,6 +6,7 @@ import random
 # import pickle
 
 from discord.ext import commands
+from discord.utils import get
 from dotenv import load_dotenv
 
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -36,6 +37,10 @@ secret_file = os.path.join(os.getcwd(), 'SvcAcctCredentials.json')
 
 # Initializing list of maps here
 maps = []
+
+# Add/vote tracking
+players_added = 0
+vote_message_id = 0
 
 def load_maps():
     creds = None
@@ -107,6 +112,10 @@ def filter_maps(players='2'):
     except HttpError as err:
         print(err)
     
+    # Overwrite added players with specified players
+    global players_added
+    players_added = players #(int("STR"))
+
     return maps_filtered
 
 # DISCORD BOT STUFF
@@ -117,15 +126,52 @@ bot = commands.Bot(command_prefix='!')
     # TODO: automatically newmaps
     # TODO: some kind of vote tracking/closure system?
 
+# Command for testing / debugging things.
 @bot.command(name='test', help='Debugging/helper command because Nomad is kind of dumb.')
 async def test_stuff(ctx):
-    response = ('testing')
-    message = await ctx.send(response)
+    test_output = ('testing')
+    #test_output = (vote_message_id)
+    test_message = await ctx.send(test_output)
+    await ctx.send(test_message.id)
 
+# Command for linking rolodex.
+@bot.command(name='rolodex', help='Link to TFC rolodex sheet.')
+async def test_stuff(ctx):
+    rolodex_link = ('https://docs.google.com/spreadsheets/d/1oCbcf-TwQOoW9u9Zu5rHeWZt7uZAkoV9ctfmidDFcYo/')
+    #test_output = (vote_message_id)
+    test_message = await ctx.send(rolodex_link)
+    #await ctx.send(test_message.id)
+
+# Command for tracking player adds.
+# TODO: track by username to avoid duplicate adds
+@bot.command(name='add', help='Enqueue yourself.')
+async def test_stuff(ctx):
+    global players_added
+    players_added += 1
+    team_size = str(int(players_added/2)) + 'v' + str(int(players_added/2))
+    print(str(players_added) + ' in the queue, using ' + team_size + ' maps')
+
+# Command for tracking player adds.
+# TODO: track by username to avoid duplicate adds
+@bot.command(name='remove', help='Abandon your friends.')
+async def test_stuff(ctx):
+    global players_added
+    players_added -= 1
+    team_size = str(int(players_added/2)) + 'v' + str(int(players_added/2))
+    print(str(players_added) + ' in the queue, using ' + team_size + ' maps')
+
+# Command for pulling maps.
+# TODO: separate some of this logic into its own function (pre-filter all maps by playercount?)
 @bot.command(name='maps', help='Returns 3 random maps from neon\'s spreadsheet, use !maps 3 for 3v3, !maps 4 for 4v4 etc.')
 async def choose_maps(ctx, players='2'):
     # Filter the maplist based on player count
     maplistsheets = filter_maps(players)
+
+    # # Announce and then reset the player count
+    # global players_added
+    # team_size = str(int(players_added/2)) + 'v' + str(int(players_added/2))
+    # print(str(players_added) + ' in the queue, using ' + team_size + ' maps')
+    # players_added = 0
     
     # Get 3 at random
     # TODO: make this less than fully random? remember previous pick(s)?
@@ -142,12 +188,50 @@ async def choose_maps(ctx, players='2'):
         '4    newmaps```'
     )
     message = await ctx.send(response)
+    
+    # Keep track of the most recent vote message
+    global vote_message_id
+    vote_message_id = message.id
 
     # Add reactions for vote tracking
     emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣']
     for emoji in emojis:
         await message.add_reaction(emoji)
 
+# # Automatically get new maps if newmaps won the vote
+# @bot.event
+# async def on_raw_reaction_add(payload):
+#     if payload.channel_id: #== 614467771866021944:
+#         print(payload.channel_id)
+#         if payload.emoji.name == "4️⃣":
+#             channel = bot.get_channel(payload.channel_id)
+#             print(channel)
+#             message = await channel.fetch_message(payload.message_id)
+#             print(message)
+#             reaction = get(message.reactions, emoji=payload.emoji.name)
+#             print(reaction)
+#             if reaction and reaction.count > 1:
+#                 # await message.delete()
+#                 #await ctx.send('VOTE TRACKING TEST')
+#                 await message.add_reaction('😄')
+
+# Automatically get new maps if newmaps won the vote
+@bot.event
+async def on_reaction_add(reaction, user):
+    # Only care about reactions to the most recent vote
+    if reaction.message.id == vote_message_id:
+        if reaction.emoji == "4️⃣":
+        #     channel = bot.get_channel(payload.channel_id)
+        #     message = await channel.fetch_message(payload.message_id)
+        #     reaction = get(message.reactions, emoji=payload.emoji.name)
+            if reaction and reaction.count > 1:
+        #         # await message.delete()
+        #         #await ctx.send('VOTE TRACKING TEST')
+                await reaction.message.add_reaction('😄')
+                cmd = bot.get_command("maps")
+                await cmd(ctx, "positional argument", kwarg='etc')
+
+                #await ctx.invoke(self.bot.get_command('') choose_maps(ctx, players_added)
 
 # If something bad happens write it down
 @bot.event
