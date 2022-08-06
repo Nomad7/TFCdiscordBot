@@ -3,21 +3,19 @@ from __future__ import print_function
 
 import os
 import random
-# import pickle
 
 from discord.ext import commands
 from discord.utils import get
 from dotenv import load_dotenv
-
+# for google sheets stuff
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.oauth2 import service_account
-# from google.auth.transport.requests import Request
-# from google.oauth2.credentials import Credentials
-# from google.auth.exceptions import RefreshError
-
-
+# for FTP stuff
+from datetime import datetime
+from ftplib import FTP
+import json
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -41,6 +39,8 @@ maps = []
 # Add/vote tracking
 players_added = 0
 vote_message_id = 0
+
+# PROGRAMATIC / LOGIC STUFF
 
 def load_maps():
     creds = None
@@ -118,6 +118,85 @@ def filter_maps(players='2'):
 
     return maps_filtered
 
+def hampalyze_logs():
+    # Connect to FTP using info from .env file
+    ftp = FTP()
+    ftp.connect(os.getenv('BOP_IP'), 21)
+    ftp.login(os.getenv('BOP_UN'), os.getenv('BOP_PW'))
+    ftp.cwd('/tfc/logs') # Navigate to the logs subfolder
+    
+    # Get the list of files in the logs folder
+    logFiles = list(reversed(ftp.nlst())) # Reverse the list of logs so it's in descending order
+    firstLog = None
+    secondLog = None
+    round1log = None # Redundant, workaround for my own inadequacies
+    round2log = None # Redundant, workaround for my own inadequacies
+
+    for logFile in logFiles[:300]: # Just check the last few logs
+        if ".log" not in logFile:
+            continue
+
+        # not using json stuff currently
+        # if 'logFiles' in prevlog and logFile in prevlog['logFiles']:
+        #     print("already parsed the latest log")
+        #     return
+
+        # Log files from 4v4 games are generally over 100k bytes
+        if int(ftp.size(logFile)) > 50000: # Log files from 2v2 games may be more like 70k
+            # Hamp's inhouse bot does this and I don't fully understand it but it works like magic - thanks hamp!
+            logModified = datetime.strptime(ftp.voidcmd("MDTM %s" % logFile).split()[-1], '%Y%m%d%H%M%S')
+            if firstLog is None:
+                print(logFile + ' is set to round2log')
+                round2log = logFile
+                firstLog = (logFile, logModified)
+                continue
+
+            # otherwise, verify that there was another round played at least <60 minutes within the last found log
+            if (firstLog[1] - logModified).total_seconds() < 3600:
+                round1log = logFile
+                print(logFile + ' is set to round1log')
+                secondLog = (logFile, logModified)
+
+            # if secondLog is not populated, this is probably the first pickup of the day; abort
+            break
+
+    # Abort if we didn't find two logs
+    if firstLog is None or secondLog is None:
+        print('Could not find a log')
+        return
+
+    # Retrieve first log file (most recent; round 2)
+    # ftp.retrbinary("RETR %s" % round2log, open('logs/%s' % round2log, 'wb').write) # Not sure why this doesn't work
+    with open(round2log, 'wb') as fp: # Workaround
+        print('Downloading ' + round2log)
+        ftp.retrbinary('RETR {0}'.format(round2log), fp.write) 
+
+    # Retrieve second log file (round 1)
+    # ftp.retrbinary("RETR %s" % secondLog[0], open('logs/%s' % secondLog[0], 'wb').write) # Not sure why this doesn't work
+    with open(round1log, 'wb') as fp: # Workaround
+        print('Downloading ' + round1log)
+        ftp.retrbinary('RETR {0}'.format(round1log), fp.write) 
+    
+    # Send the retrieved log files to hampalyzer
+    hampalyze = 'curl -X POST -F logs[]=@%s -F logs[]=@%s http://app.hampalyzer.com/api/parseGame' % (round1log, round2log)
+    # Capture the result
+    output = os.popen(hampalyze).read()
+    print(output)
+
+    # Check if it worked or not
+    status = json.loads(output)
+    if 'success' in status:
+        site = "http://app.hampalyzer.com" + status['success']['path']
+        print("Parsed logs available: %s" % site)
+        # not using json stuff currently
+        # with open('prevlog.json', 'w') as f:
+        #     prevlog = { 'site': site, 'logFiles': [ firstLog[0], secondLog[0] ] }
+        #     json.dump(prevlog, f)
+    else:
+        print('error parsing logs: %s' % output)
+    
+    return site # Give the hampalyzer link
+
 # DISCORD BOT STUFF
 # Bot expects !commands
 bot = commands.Bot(command_prefix='!')
@@ -136,16 +215,14 @@ async def test_stuff(ctx):
 
 # Command for linking rolodex.
 @bot.command(name='rolodex', help='Link to TFC rolodex sheet.')
-async def test_stuff(ctx):
+async def rolodex(ctx):
     rolodex_link = ('https://docs.google.com/spreadsheets/d/1oCbcf-TwQOoW9u9Zu5rHeWZt7uZAkoV9ctfmidDFcYo/')
-    #test_output = (vote_message_id)
-    test_message = await ctx.send(rolodex_link)
-    #await ctx.send(test_message.id)
+    await ctx.send(rolodex_link)
 
 # Command for tracking player adds.
 # TODO: track by username to avoid duplicate adds
 @bot.command(name='add', help='Enqueue yourself.')
-async def test_stuff(ctx):
+async def adding(ctx):
     global players_added
     players_added += 1
     team_size = str(int(players_added/2)) + 'v' + str(int(players_added/2))
@@ -154,7 +231,7 @@ async def test_stuff(ctx):
 # Command for tracking player adds.
 # TODO: track by username to avoid duplicate adds
 @bot.command(name='remove', help='Abandon your friends.')
-async def test_stuff(ctx):
+async def removing(ctx):
     global players_added
     players_added -= 1
     team_size = str(int(players_added/2)) + 'v' + str(int(players_added/2))
@@ -230,8 +307,33 @@ async def on_reaction_add(reaction, user):
                 await reaction.message.add_reaction('😄')
                 cmd = bot.get_command("maps")
                 await cmd(ctx, "positional argument", kwarg='etc')
-
                 #await ctx.invoke(self.bot.get_command('') choose_maps(ctx, players_added)
+
+# retrieve logs from FTP and get hampalyzer link
+@bot.command(name='stats', help='Hamaplyze most recent pair of large log files from FTP.')
+async def get_logs(ctx):
+    logs_link = hampalyze_logs()
+    await ctx.send(logs_link)
+  
+#   # for posting the actual log files to discord
+#   firstfile, secondfile = hampalyze_logs() 
+#   await message.channel.send(file=discord.File(firstfile))
+#   await message.channel.send(file=discord.File(secondfile))
+#   # delete the downloaded files
+#   os.unlink(firstfile) 
+#   os.unlink(secondfile)
+
+# @bot.event
+# async def on_message(message):
+#   if message.author == bot.user:
+#     return
+#   if message.content.startswith('$gimme'):
+#     firstfile, secondfile = download_random_file()
+#     # file_downloaded = getLastGameLogs()
+#     await message.channel.send(file=discord.File(firstfile))
+#     os.unlink(firstfile) #Delete the downloaded file
+#     await message.channel.send(file=discord.File(secondfile))
+#     os.unlink(secondfile) #Delete the downloaded file
 
 # If something bad happens write it down
 @bot.event
@@ -255,6 +357,7 @@ async def on_ready():
     print(f'{bot.user.name} has connected to Discord! Now online in these servers...')
     for i in bot.guilds:
         print(i)
+    # print('We have logged in as {0.user}'.format(bot))
 
 # Start the bot when this file is running
 bot.run(TOKEN)
